@@ -4,16 +4,33 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use Illuminate\Http\Request;
+use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        //get all user data
-        $user = User::all();
+        $take = $request->query('take', 10); // default 10 data
+        $skip = $request->query('skip', 0); // default 0 data
+        $search = $request->query('search');
+
+        if ($search) {
+            $user = User::where('name', 'like', '%' . $search . '%')
+                ->take($take)
+                ->skip($skip)
+                ->join('model_has_roles', 'users.id', '=', 'model_has_roles.model_id')
+                ->join('roles', 'model_has_roles.role_id', '=', 'roles.id')
+                ->select('users.*', 'roles.name as role')
+                ->get();
+        } else {
+            $user = User::take($take)->skip($skip)->join('model_has_roles', 'users.id', '=', 'model_has_roles.model_id')
+                ->join('roles', 'model_has_roles.role_id', '=', 'roles.id')
+                ->select('users.*', 'roles.name as role')
+                ->get();
+        }
         return response()->json(
             [
                 'code' => '200',
@@ -30,21 +47,37 @@ class UserController extends Controller
     public function store(Request $request)
     {
         // validate request
+        // $role = Role::find($request->role_id);
         $this->validate($request, [
             'name' => 'required',
             'email' => 'required',
-            'password' => 'confirmed, required'
+            'password' => 'required',
+            'role' => 'required'
         ]);
-        //store data to database
-        $user = User::create($request->all());
-        return response()->json(
-            [
-                'code' => '201',
-                'status' => 'success',
-                'data' => $user
-            ],
-            201
-        );
+        if ($request->role == 'admin') {
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => bcrypt($request->password)
+            ]);
+            $user->assignRole('admin');
+        } elseif ($request->role == 'user') {
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => bcrypt($request->password)
+            ]);
+            $user->assignRole('user');
+        }
+        return response()
+            ->json(
+                [
+                    'code' => '201',
+                    'status' => 'success',
+                    'data' => $user
+                ],
+                201
+            );
     }
 
     /**
@@ -72,10 +105,25 @@ class UserController extends Controller
         $this->validate($request, [
             'name' => 'required',
             'email' => 'required',
-            'password' => 'confirmed, required'
+            'password' => 'required',
+            'role' => 'required'
         ]);
         //update data user by id
-        $user->update($request->all());
+        if ($request->role == 'admin') {
+            $user->update([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => bcrypt($request->password)
+            ]);
+            $user->syncRoles('admin');
+        } elseif ($request->role == 'user') {
+            $user->update([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => bcrypt($request->password)
+            ]);
+            $user->syncRoles('user');
+        }
         return response()->json(
             [
                 'code' => '200',
@@ -93,6 +141,7 @@ class UserController extends Controller
     {
         // delete data by id
         $user->delete();
+        $user->removeRole($user->role);
         return response()->json(
             [
                 'code' => '200',
